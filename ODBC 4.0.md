@@ -63,7 +63,7 @@ Drivers registered through the ODBC setup utility are available to all applicati
 
 ODBC 4.0 enables applications to use their own private drivers. Such drivers are not visible to other applications and may support different versions from applications using the same driver.
 
-Private drivers are not registered using the ODBC setup utility. The Driver Manager loads private drivers by looking in the application’s install directory for a folder named “ODBC Drivers”. Each private driver is represented by a subfolder with the same name as *driver-name*. This folder must contain a .ini file whose name is the *driver-name* with the “.ini” suffix.
+Private drivers are not registered using the ODBC setup utility. The Driver Manager loads private drivers by looking in the application’s install directory for a folder named “ODBC Drivers”. Each private driver is represented in that directory by a .ini file whose name is the *driver-name* with the “.ini” suffix.
 
 The .ini file follows the [windows .ini file format](https://en.wikipedia.org/wiki/INI_file). It is a text file whose first line is a section header containing the name of the driver, enclosed in square brackets, and followed by keyword=value pairs, one per line. Valid keyword-value pairs are the [subkeys](https://msdn.microsoft.com/en-us/library/ms709431(v=vs.85).aspx) allowed for the driver specific section under ODBCINST.INI, along with a new “ApplicationKey” key-value pair which, if specified, is passed by the driver manager to the driver in a call to SetEnvAttr with the new `SQL_ATTR_APPLICATION_KEY` attribute. The driver developer can use this to validate that the calling application is permitted to use the driver, for example, by using a signed hash of the application’s publisher validated against the calling application at runtime.
 
@@ -113,19 +113,19 @@ In cases where different authentication methods may be supported, the driver can
 
 Common keywords for `Auth_Type` include “`Basic`”, “`Integrated`”, “`OAuth_1.0`”, “`OAuth_2.0`”, and “`None`”. Drivers should use these keywords for the corresponding authentication types, where supported, and may specify other driver-specific authentication types.
 
-In order to specify an authentication method, the application calls SQLBrowseConnect with a collection string specifying one of those allowed authentication methods, and SQLBrowseConnect returns an output connection string requesting the connection attributes required for that particular choice.
+In order to specify an authentication method, the application calls SQLBrowseConnect with a connection string specifying one of those allowed authentication methods, and SQLBrowseConnect returns an output connection string requesting the connection attributes required for that particular choice.
 
 For OAuth 2.0, SQLBrowseConnect returns an OutConnectionString requesting a redirect uri, along with a client ID, a client secret, and a scope, as required, along with any required provider-specific properties.
 
-    "Auth_BaseRedirectUri:Redirect Uri:?;Auth_Client_ID:ClientID=?;Auth_Client_Secret:Client Secret=?;*Auth_Scope:Scope={XXX:xxx,YYY:yyy,ZZZ:zzz}"
+    "Auth_BaseRedirectUri:Redirect Uri=?;Auth_Client_ID:ClientID=?;Auth_Client_Secret:Client Secret=?;*Auth_Scope:Scope={XXX:xxx,YYY:yyy,ZZZ:zzz}"
 
 If the service supports scopes but the driver is unable to enumerate those scopes, it simply returns a question mark (?) as the value for `Auth_Scope` in the output connection string:
 
-    "Auth_BaseRedirectUri:Redirect Uri:?;Auth_Client_ID:ClientID=?;Auth_Client_Secret:Client Secret=?;*Auth_Scope:Scope=?"
+    "Auth_BaseRedirectUri:Redirect Uri=?;Auth_Client_ID:ClientID=?;Auth_Client_Secret:Client Secret=?;*Auth_Scope:Scope=?"
 
 For an OAuth 1.0, the output connection string would also ask for `Auth_Realm` and `Auth_Token_Secret`.
 
-    "Auth_BaseRedirectUri:Redirect Uri:?;Auth_Client_ID:ClientID=?;Auth_Client_Secret:Client Secret=?;*Auth_Scope:Scope=?;Auth_Realm:Realm=?;Auth_Token_Secret:Token Secret=?"
+    "Auth_BaseRedirectUri:Redirect Uri=?;Auth_Client_ID:ClientID=?;Auth_Client_Secret:Client Secret=?;*Auth_Scope:Scope=?;Auth_Realm:Realm=?;Auth_Token_Secret:Token Secret=?"
 
 The application next calls SQLBrowseConnect with a connection string containing the redirect uri, the client ID, and client secret, along with scope, realm, and token secret, as appropriate:
 
@@ -133,7 +133,7 @@ The application next calls SQLBrowseConnect with a connection string containing 
 
 The driver responds with a connection string containing the authorization url and requesting the final redirect uri. For the best client UI experience, the output connection string should also include suggested window height and width (in pixels) for the browser window:
 
-    “AuthorizationUrl=xxx; Auth_WindowHeight=xxx;Auth_WindowWidth=xxx;Auth_CompletedRedirectUri=?”
+    “AuthorizationUrl=xxx;Auth_WindowHeight=xxx;Auth_WindowWidth=xxx;Auth_CompletedRedirectUri=?”
 
 The application navigates the browser to the Url specified by the authorization url. Auth flow is complete once the browser reaches the redirect uri.
 
@@ -348,47 +348,54 @@ Drivers advertise support for this escape clause through the new `SQL_LIMIT_ESCA
 * **SQL\_LC\_TAKE** = 1 – the driver supports only the take portion of the limit escape clause
 * **SQL\_LC\_TAKE\_AND\_SKIP** = 3 – the driver supports both take and skip in the limit escape clause
 
-#### 3.3.5.2 Selecting Inserted/Updated/Deleted Values
+#### 3.3.5.2 Selecting Inserted Updated and Deleted Values
 
 The *ODBC-return-escape* clause returns a table containing information from inserted, updated, and deleted records:
 
 *ODBC-return-escape* ::=
-     *ODBC-esc-initiator* return *return-specification* from (*vendor-dml-statement*) *ODBC-esc-terminator*
+     *ODBC-esc-initiator* return *select-list* from '*vendor-dml-statement*' *ODBC-esc-terminator*
 
-*return-specification* ::= *rowid* | *select-list* \[, *rowid* | *select-list*\]...
+For Inserts and Updates, the returned values are the values of the affected rows following the insert or update operation. For delete operations, the returned values represent the values of the rows at the time they were deleted.
 
-*rowid* ::= *ODBC-esc-initiator* rowid *ODBC-esc-terminator*
+For example, the following statement returns a table containing the columns named "OrderId", "Item" and "Total" of a newly inserted row:
 
-If *rowid* is specified in *return-specification*, the driver adds to the select list the column or columns that uniquely identify each row in the target table (typically the set of columns returned for `SQL_BEST_ROWID` in SQLSpecialColumns). 
-
-For example, the following statement returns a table containing the columns named "id" and "total" of a newly inserted row:
-
-> {return id from (INSERT INTO table(amount,total) VALUES (2,3))}
+> {return OrderId, Item, Total from 'INSERT INTO Orders(Item, Price, Quantity) VALUES (''San Juan Islands Map'',24,2)'}
 
 The following statement retrieves the new total of all rows with ids above 10 that were updated:
 
-> {return total from (UPDATE table SET {amount=amount\*10} WHERE id &gt; 10)}
+> {return total from 'UPDATE table SET amount=amount\*10 WHERE id &gt; 10'}
 
-The following statement retrieves the set of columns that uniquely identify a row in the target table for all rows with totals above 10 that were deleted:
+The *ODBC-return-escape* should not be used as a nested query within another statement.
 
-> {return {rowid} from (DELETE FROM table WHERE total &gt; 10)}
+Single quotation marks within *vendor-dml-statement* must be doubled. The driver replaces two adjacent single quotations marks within the dml statement with a single quotation mark. A single quotation mark terminates the dml statement.
 
-If the application requests columns that don't exist in the row, or the client specifies `{rowid}` and no set of columns uniquely identify the row, the driver returns `42S22` Column not found.  
+If an array of parameter values is specified, then whether there is a result set for each set of parameter values or a single result that merges the results from each set of parameter values is defined by the `SQL_PARAM_ARRAY_SELECTS` SQLGetInfo *InfoType*.
 
-If the application requests columns that exist in the row but the driver is unable to return those columns, the driver should return `HYC00` Optional feature not implemented but may instead return `42S22` Column not found.
+If multiple rows are specified in an INSERT INTO...VALUES statement, or an array of parameter values are specified, then the order of rows returned matches the order of values specified. In all other cases, the order of returned rows is indeterminate.  
 
-Drivers advertise support for this escape clause through the `SQL_RETURN_ESCAPE_CLAUSE` *InfoType* whose value is a bitmask made up of the following values. Note that supporting an arbitrary column for an expression implies supporting primary key fields for that expression.
+If no rows are affected by the statement, an empty result is returned.
 
-| Value                        | Description                                                        |
-|--------------------------------------|------------------------------------------------------------|
-| `SQL_RC_NONE` = 0            | The driver has no support for the return escape clause                                                  |
-| `SQL_RC_SINGLE_INSERT_ROWID` | The driver supports the use of `{rowid}` to retrieve a unique set of columns for a single inserted row  |
-| `SQL_RC_INSERT_ROWID`        | The driver supports the use of `{rowid}` to retrieve a unique set of columns for sets of inserted rows  |
-| `SQL_RC_INSERT_SELECTLIST`   | The driver supports getting arbitrary columns from sets of inserted rows                                |
-| `SQL_RC_UPDATE_ROWID`        | The driver supports the use of `{rowid}` to retrieve a unique set of columns for sets of updated rows   |
-| `SQL_RC_UPDATE_SELECTLIST`   | The driver supports getting arbitrary columns from sets of updated rows                                 |
-| `SQL_RC_DELETE_ROWID`        | The driver supports the use of `{rowid}` to retrieve a unique set of columns for sets of deleted rows   |
-| `SQL_RC_DELETE_SELECTLIST`   | The driver supports getting arbitrary columns from sets of deleted rows                                 |
+The driver may limit the columns in the select-list to include only the best row id columns returned by SQLSpecialColumns, as specified in the `SQL_RETURN_ESCAPE_CLAUSE` *InfoType*.
+
+If the application requests columns that don't exist in the row and SQL_DYNAMIC_COLUMNS is false, or the driver only supports returning row id columns and the client specifies non-row id columns in the *select-list*, the driver returns `42S22` Column not found.
+
+Drivers advertise support for this escape clause through the `SQL_RETURN_ESCAPE_CLAUSE` *InfoType* whose value is a bitmask made up of the following values.
+
+| Value                          | Description                                                         |
+|--------------------------------|---------------------------------------------------------------------|
+| `SQL_RC_NONE` = 0              | The driver has no support for the return escape clause                                                |
+| `SQL_RC_INSERT_SINGLE_ROWID`   | The driver supports returning row id fields for a single row from an INSERT INTO...VALUES statement   |
+| `SQL_RC_INSERT_SINGLE_ANY`     | The driver supports returning any fields for a single row from an INSERT INTO...VALUES statement      |
+| `SQL_RC_INSERT_MULTIPLE_ROWID` | The driver supports returning row id fields for multiple rows from an INSERT INTO...VALUES statement  |
+| `SQL_RC_INSERT_MULTIPLE_ANY`   | The driver supports returning any fields for multiple rows from an INSERT INTO...VALUES statement     |
+| `SQL_RC_INSERT_SELECT_ROWID`   | The driver supports returning row id fields from an INSERT INTO...SELECT statement                    |
+| `SQL_RC_INSERT_SELECT_ANY`     | The driver supports returning any fields from an INSERT INTO...SELECT statement                       |
+| `SQL_RC_UPDATE_ROWID`          | The driver supports returning row id fields from an UPDATE statement                                  |
+| `SQL_RC_UPDATE_ANY`            | The driver supports returning any fields from a UPDATE statement                                      |
+| `SQL_RC_DELETE_ROWID`          | The driver supports returning row id fields from a DELETE statement                                   |
+| `SQL_RC_DELETE_ANY`            | The driver supports returning any fields from a DELETE statement                                      |
+| `SQL_RC_SELECT_INTO_ROWID`     | The driver supports returning row id fields from a SELECT INTO statement                              |
+| `SQL_RC_SELECT_INTO_ANY`       | The driver supports returning any fields from a SELECT INTO statement                                 |
 
 #### 3.3.5.3 Format Clause
 
@@ -402,11 +409,11 @@ For results returned as JSON, *data-type* must be a character string or binary t
 
 Drivers advertise support for this escape clause through the `SQL_FORMAT_ESCAPE_CLAUSE` *InfoType* whose value is a bitmask made up of the following values.
 
-| Value                | Description                                                                         |
-|----------------------|-------------------------------------------------------------------------------------|
-| `SQL_FC_NONE` = 0    | The driver has no support for the format escape clause                              |
-| `SQL_FC_JSON`        | The driver supports returning results as a JSON character string                    |
-| `SQL_FC_JSON_BINARY` | The driver supports returning results as a JSON binary string                       |
+| Value                | Description                                                       |
+|----------------------|-------------------------------------------------------------------|
+| `SQL_FC_NONE` = 0    | The driver has no support for the format escape clause            |
+| `SQL_FC_JSON`        | The driver supports returning results as a JSON character string  |
+| `SQL_FC_JSON_BINARY` | The driver supports returning results as a JSON binary string     |
 
 #### 3.3.5.4 Native Syntax
 
@@ -415,7 +422,7 @@ ODBC clients use the `SQL_NOSCAN` statement attribute to specify that the comman
 The *ODBC-native-escape* clause enables clients to embed native syntax within a SQL92 statement:
 
 *ODBC-native-escape* ::=
-     *ODBC-esc-initiator* native (*command-text*) \[*returning-clause*\] *ODBC-esc-terminator*
+     *ODBC-esc-initiator* native '*command-text*' \[*returning-clause*\] *ODBC-esc-terminator*
 
 *returning-clause* ::= RETURNING (*type* \[, *type*\]…) \[*json-format-clause*\]
 
@@ -430,6 +437,8 @@ The *returning-clause* is required for retrieving results from the native syntax
 If *json-format-clause* is specified, *type* must be a string or binary type.
 
 Single question marks within the native command not within single-quotation marks are interpreted as parameter markers. In order to pass an unquoted question mark as part of the native syntax, the application must double the question mark. The driver will convert unquoted doubled question marks to single question marks when evaluating the native command.
+
+Single quotation marks within the native syntax must be doubled. The driver replaces two adjacent single quotations marks within the native syntax with a single quotation mark. A single quotation mark terminates the native command text.
 
 Drivers advertise support for this escape clause through the new `SQL_NATIVE_ESCAPE_CLAUSE` *InfoType* whose value is the character string “`Y`” if the escape clause is supported; “`N`” otherwise.
 
@@ -503,8 +512,8 @@ In order to be notified when an unbound column is available to be retrieved duri
 2.  App calls SQLFetch/SQLFetchScroll
     -   Driver begins populating the bindings
     -   Driver returns `SQL_DATA_AVAILABLE` return code from SQLFetch/SQLFetchScroll
-        1.  Calling SQLFetch/SQLFetchScroll after SQLFetch, SQLFetchScroll, or SQLNextColumn returns `SQL_DATA_AVAILABLE` skips the remaining columns and begins fetching the next row.
-        2.  Calling SQLCancel cancels the fetch operation and closes the cursor.
+        1. Calling SQLFetch or SQLFetchScroll in a data-available state results in a function sequence error. 
+        2. Calling SQLCloseCursor (or SQLFreeStmt(SQL_CLOSE)) cancels the fetch operation and closes the cursor.
 
 3.  App calls SQLNextColumn to find out which column is available. Applications must not assume that the columns are returned in any particular order.
     -   Driver returns the ordinal of the available column
@@ -525,7 +534,9 @@ In order to be notified when an unbound column is available to be retrieved duri
 
 A new SQL GetData Extension, `SQL_GD_CONCURRENT`, is added. 
 
-If the driver reports `SQL_GD_CONCURRENT`, the driver supports concurrent fetching of multiple columns using SQLGetData and/or nested handles. If the driver specifies `SQL_GD_ANY_ORDER` and does not specify `SQL_GD_CONCURRENT`, calling SQLGetData or retrieving data from a nested handle resets the position of any columns previously fetched using SQLGetData to the beginning and closes the cursor (but does not automatically free the hstmt) of any previously fetched nested columns for this row.
+If the driver reports `SQL_GD_CONCURRENT`, fetching partial data from one column (using SQLGetData) or on a nested statement handle does not affect the position or state of any other column or nested handle. If the driver specifies `SQL_GD_ANY_ORDER` and does not specify `SQL_GD_CONCURRENT`, calling SQLGetData or retrieving data from a nested handle resets the position of any columns previously fetched using SQLGetData to the beginning and closes the cursor (but does not automatically free the hstmt) of any previously fetched nested columns for this row.
+
+Note that SQL_GD_CONCURRENT does not imply that the driver supports multiple concurrent asynchronous requests associated with the same parent statement handle. The root statement handle defines the scope for concurrent asynchronous operations.
 
 ## 3.7 Variable Typed Columns
 Variable typed columns are columns whose type is unknown or may change on a row-by-row basis.
@@ -544,7 +555,7 @@ As data is read for a row the IRD is updated to reflect the actual type informat
 
 Depending on the value of [SQL_ATTR_TYPE_EXCEPTION_BEHAVIOR](#3731-sql_attr_type_exception_behavior), if the descriptor is changed for a column the driver may return `SQL_METADATA_CHANGED`.
 
-The application can set fields in the ARD/IRD directly or through SQLBindCol, but only for the current row. Any changes to the descriptor record persistent for future uses of that descriptor.
+The application can set fields in the ARD directly or through SQLBindCol, but only for the current column. Any changes to the descriptor record persistent for future uses of that descriptor.
 
 Upon receiving `SQL_METADATA_CHANGED`, the application can call SQLNextColumn to determine the index of the column that has changed, get the current information for that column, and either adjust bindings as necessary or call SQLGetData or SQLGetHandle, as appropriate for the type of the column.
 
@@ -591,10 +602,10 @@ When the driver returns `SQL_MORE_DATA`, the application calls SQLNextColumn in 
 
 ### 3.8.1 `SQL_ATTR_LENGTH_EXCEPTION_BEHAVIOR`
 
-The new `SQL_ATTR_LENGTH_EXCEPTION_BEHAVIOR` is a `SQL_USMALLINT` value that allows the client to control how binary and string overflows are handled when retrieving bound values.
+The new `SQL_ATTR_LENGTH_EXCEPTION_BEHAVIOR` is a `SQL_USMALLINT` value that allows the client to control how string and binary overflows are handled when retrieving bound values.
 
-* **SQL\_LE\_CONTINUE** – (Default) Set the `str_type_or_ind_ptr` value for the column/output parameter to the total length available, if known, otherwise `SQL_NO_TOTAL`. When the driver completes fetching the row/executing the statement it will return `SQL_SUCCESS_WITH_INFO` with a `SQLSTATE` of `01004`, String data, right truncated.
-* **SQL\_LE\_REPORT** – Return `SQL_MORE_DATA` from the when the string or binary value of a row or parameter does not fit the bound buffer. The application can retrieve the remainder of the column/output parameter using SQLGetData, and then call SQLNextColumn or SQLParamData, as appropriate, to continue processing.
+* **SQL\_LE\_CONTINUE** – (Default) For string or binary values larger than the bound buffer length, set the `str_type_or_ind_ptr` value to the total length available, if known, otherwise `SQL_NO_TOTAL`. When the driver completes fetching the row/executing the statement it will return `SQL_SUCCESS_WITH_INFO` with a `SQLSTATE` of `01004`, String data, right truncated.
+* **SQL\_LE\_REPORT** – Return `SQL_MORE_DATA` when the string or binary value of a row or parameter does not fit the bound buffer. The application can retrieve the remainder of the column/output parameter using SQLGetData, and then call SQLNextColumn or SQLParamData, as appropriate, to continue processing.
 
 ## 3.9 Dynamic Columns
 
@@ -614,13 +625,15 @@ The default for this statement attribute is *False*.
 
 Data sources with fixed schemas always return *False* for this value. Attempting to set this value for such a data source returns `SQL_SUCCESS_WITH_INFO` with a diagnostic code of 01S02, Option Value Changed, and reading this value will continue to return *False*.
 
-If set to true, SQLFetch, SQLFetchScroll, SQL_NextColumn, SQLGetData, and SQLCloseCursor for nested statement handles return `SQL_DATA_AVAILABLE` if new columns are discovered/added to the IRD while retrieving results.
+If set to *True*, SQLFetch, SQLFetchScroll, SQL_NextColumn and SQLGetData return `SQL_DATA_AVAILABLE` if new columns are discovered/added to the IRD while retrieving results.
 
-If `SQL_ATTR_DYNAMIC_COLUMNS` is true, then columns in the ARD that don’t apply to the current row have their `len_or_ind_ptr` set to `SQL_DATA_UNAVAILABLE`. If `SQL_ATTR_DYNAMIC_COLUMNS` is false, then only known columns are allowed in a Select list and only known columns are returned when /* is specified.
+If `SQL_ATTR_DYNAMIC_COLUMNS` is true, then columns in the ARD that don’t apply to the current row have their `len_or_ind_ptr` set to `SQL_DATA_UNAVAILABLE`. If `SQL_ATTR_DYNAMIC_COLUMNS` is false, then only known columns are allowed in a select list and only known columns are returned when \* is specified.
+
+Applications may change SQL_ATTR_DYNAMIC_COLUMNS from *True* to *False* at any time to ignore dynamic columns. Attempting to set `SQL_ATTR_DYNAMIC_COLUMNS` from *False* to *True* on a statement handle with an open cursor results in HY010, Function Sequence Error. 
 
 ### 3.9.2 Schema Extensions for Dynamic Columns
 
-If `SQL_ATTR_DYNAMIC_COLUMNS` is true, tables that support properties not defined in SQLColumns are returned from SQLTables using the new “`OPEN TABLE`” table type. If `SQL_ATTR_DYNAMIC_COLUMNS` is false, such tables are returned with a table type of "`TABLE`".
+If `SQL_ATTR_DYNAMIC_COLUMNS` is true, tables that support properties not defined in SQLColumns are returned from SQLTables using the new `“OPEN TABLE”` table type. If `SQL_ATTR_DYNAMIC_COLUMNS` is false, such tables are returned with a table type of `"TABLE"`.
 
 ### 3.9.3 Query Extensions for Dynamic Columns
 
@@ -628,7 +641,7 @@ A fully explicit select-list (i.e., anything that doesn't contain \*) imposes a 
 
 Structured columns specified in a select list implicitly select all columns (declared and dynamic) of the structured type.
 
-For OPEN TABLEs, any valid identifier for the driver is allowed as a column reference in a SQL Statement (select-list, expression in a where-clause, etc.). If more than one column-source is in scope, any references to unschematized columns MUST be qualified with the row source. Columns that aren’t defined for a particular row, or whose type is not compatible in an expression, are considered null in evaluating the expression. Such columns in a select-list are treated as [untyped columns](#37-Variable-Typed-Columns) prior to the first fetch.
+For OPEN TABLEs, any valid identifier for the driver is allowed as a column reference in a SQL Statement (select-list, expression in a where-clause, etc.). If more than one column-source is in scope, any references to unschematized columns MUST be qualified with the row source. Columns that aren’t defined for a particular row, or whose type is not compatible in an expression, are considered null in evaluating the expression. Such columns in a select list or an expression are treated as [variable typed columns](#37-Variable-Typed-Columns).
 
 For tables not reported as open (including all tables for pre-ODBC 4.0 clients), it remains an error to reference an undefined column.
 
@@ -640,11 +653,11 @@ Result descriptor functions (SQLNumResultCols, SQLDescribeCol, SQLColAttribute(s
 
 If `SQL_ATTR_DYNAMIC_COLUMNS` is set to true, the driver can return dynamic columns as data-at-fetch columns when fetching a row.
 
-If the driver encounters a dynamic (unschematized) column that does not match any existing IRD records, the driver
+If the driver encounters a dynamic (unschematized) column that does not exactly match any existing IRD records, the driver
 
 1.  Creates a new IRD record for the column; this becomes a new, unbound column in the result. The application must bind the column, or set the `str_len_or_indicator_ptr` to `SQL_DATA_AT_FETCH`, in order to retrieve the value in subsequent calls to SQLFetch. Once added to the IRD, dynamic columns become "known columns". If the type and length information changes on subsequent rows, the driver may return SQL_METADATA_CHANGED based on the [`SQL_ATTR_TYPE_EXCEPTION_BEHAVIOR`](#3731-SQL_ATTR_TYPE_EXCEPTION_BEHAVIOR). Alternatively, the driver may create additional IRD records with the same name for dynamic columns of different types. Once added, the descriptor fields are a permanent part of the descriptor until it is freed.
 
-2.  Returns `SQL_DATA_AVAILABLE` from SQLFetch, SQLFetchScroll, or SQLCloseCursor on a nested statement handle
+2.  Returns `SQL_DATA_AVAILABLE` from SQLFetch or SQLFetchScroll
 
     1.  Application calls [SQLNextColumn](#61-sqlnextcolumn) to retrieve the ordinal of the descriptor record that describes the column.
 
@@ -663,23 +676,6 @@ To create/update dynamic columns, clients can specify column names outside of th
 ### 3.9.6 Data Definition Extensions for Dynamic Columns
 
 Applications can create tables and types that support the presence of dynamic columns using the new [*ODBC-open-escape*](#3961-open-escape-clause) clause.
-
-#### 3.9.6.1 Open Escape Clause
-
-ODBC adds a new *ODBC-open-escape* clause that can be specified when creating a type or a table to specify that an instance of the type, or a row within the table, can have additional [dynamic](#39-dynamic-columns) columns not specified in the definition:
-
-*ODBC-open-escape* ::=
-     *ODBC-esc-initiator* open *ODBC-esc-terminator*
-
-For example:
-
-> CREATE {open} TYPE FULLNAME(Firstname varchar(25), LastName varchar (25))
-
-> CREATE {open} TABLE Employees(FirstName varchar(25), LastName varchar(25))
-
-Tables created with the ODBC-open-escape clause can have an empty column list, in which case all of the columns are unschematized:
-
-> CREATE {open} TABLE Stuff()
 
 ## 3.10 Structured Columns
 
@@ -875,7 +871,7 @@ The ability to report collection-valued columns leverages the extensible type fa
 
 ### 3.11.1 Schema Extensions for Collection-valued Columns
 
-Collection-valued table columns are described in SQLColumns. Collection-valued result columns are described through SQLColAttribute(s)/SqlDescribeCol/SqlGetDescriptor.
+Collection-valued table columns are described in SQLColumns. Collection-valued result columns are described through SQLColAttribute(s)/SqlDescribeCol/SqlGetDescField.
 
 Collection-valued columns may be ordered or unordered.
 
@@ -885,7 +881,7 @@ For ordered array-valued columns, the value of the `DATA_TYPE` attributes is `SQ
 
 The remaining columns, including the `SQL_DATA_TYPE`, describe the type of the element within the collection.
 
-Additionally, clients may get the type of a collection-valued column by passing the name of the collection-valued column appended with “[]” (repeated, for nested arrays), as the column name in SQLColumns/SQLTypeColumns.
+Additionally, clients may get the type of a collection-valued column by passing the name of the collection-valued column appended with “[]” (repeated, for nested collections), as the column name in SQLColumns/SQLStructuredTypeColumns.
 
 ### 3.11.2 Query Extensions for Collections
 
@@ -1072,7 +1068,7 @@ The application calls SQLNextColumn in order to retrieve the column of data curr
       SQLHSTMT StatementHandle,
       SQLUSMALLINT* Col_or_Param_Num);
 
-SQLNextColumn can first be called only after SQLFetch or SQLFetchScroll returns `SQL_DATA_AVAILABLE`, and as long as SQLNextColumn returns `SQL_DATA_AVAILABLE`.
+SQLNextColumn can first be called only after SQLFetch or SQLFetchScroll returns `SQL_DATA_AVAILABLE`, `SQL_METADATA_CHANGED`, or `SQL_MORE_DATA`, and as long as SQLNextColumn continues to return one of these values.
 
 The Driver Manager returns `HY010`, Function Sequence Error under the following conditions:
 
@@ -1080,21 +1076,21 @@ The Driver Manager returns `HY010`, Function Sequence Error under the following 
 
 2.  SQLFetch or SQLFetschScroll have not been called on the executed statement.
 
-3.  The most recent call to SQLFetch, SQLFetchScroll, or SQLNextColumn did not return `SQL_DATA_AVAILABLE`
+3.  The most recent call to SQLFetch, SQLFetchScroll, or SQLNextColumn on this statement handle did not return `SQL_DATA_AVAILABLE`, `SQL_METADATA_CHANGED`, or `SQL_MORE_DATA`
 
 4.  There is an asynchronously executing function called on this statement handle, or the connection associated with this statement handle, that has not completed.
 
-The driver manager returns `HY010`, Function sequence error, from SQLSetPos if the most recent call to SQLFetch, SQLFetchScroll, or SQLNextColumn returned a value other than `SQL_SUCCESS` or `SQL_SUCCESS_WITH_INFO`.
+The driver manager returns `HY010`, Function sequence error, from SQLSetPos, SQLFetch, or SQLFetchScroll if the most recent call to SQLFetch, SQLFetchScroll, or SQLNextColumn returned `SQL_DATA_AVAILABLE`.
 
 ### 6.1.1 Usage
 
-While fetching a row that contains a column whose `str_len_or_indicator_ptr` contains `SQL_DATA_AT_FETCH`, when reading a dynamic column while `SQL_ATTR_DYNAMIC_COLUMNS` is true, or when encountering a length or type exception, depending on the value of [`SQL_ATTR_LENGTH_EXCEPTION`](#381-SQL_ATTR_LENGTH_EXCEPTION_BEHAVIOR) and [`SQL_ATTR_TYPE_EXCEPTION`](#3731-SQL_ATTR_TYPE_EXCEPTION_BEHAVIOR), respectively, the driver returns `SQL_DATA_AVAILABLE` or `SQL_METADATA_CHANGED`, and the application calls SQLNextColumn in order to determine the ordinal of the next available column to be read.
+While fetching a row that contains a column whose `str_len_or_indicator_ptr` contains `SQL_DATA_AT_FETCH`, when reading a dynamic column while `SQL_ATTR_DYNAMIC_COLUMNS` is true, or when encountering a length or type exception, depending on the value of [`SQL_ATTR_LENGTH_EXCEPTION`](#381-SQL_ATTR_LENGTH_EXCEPTION_BEHAVIOR) and [`SQL_ATTR_TYPE_EXCEPTION`](#3731-SQL_ATTR_TYPE_EXCEPTION_BEHAVIOR), respectively, the driver returns `SQL_DATA_AVAILABLE`, `SQL_METADATA_CHANGED`, or `SQL_MORE_DATA`, and the application calls SQLNextColumn in order to determine the ordinal of the next available column to be read.
 
 The application can use the returned `Col_or_Param_Num` to retrieve information about the available column or parameter, but must not change descriptor information relative to the descriptor header record or any descriptor records not associated with the returned `Col_or_Param_Num`.
 
-Once all data-at-fetch columns have been returned, SQLNextColumn returns `SQL_SUCCESS` or `SQL_SUCCESS_WITH_INFO` with any valid SQLState from SQLFetch/SQLFetchScroll.
+Once all columns have been processed, SQLNextColumn returns `SQL_SUCCESS` or `SQL_SUCCESS_WITH_INFO` with any valid SQLState from SQLFetch/SQLFetchScroll.
 
-Calling SQLNextColumn with a null pointer for `Col_or_Param_Num` skips the rest of the `DATA_AT_FETCH` columns for this row.
+Calling SQLNextColumn with a null pointer for `Col_or_Param_Num` populates any remaining bound columns, skipping any `DATA_AT_FETCH` or unbound dynamic columns and treating any type or length exceptions according to `SQL_TE_CONTINUE` and `SQL_LE_CONTINUE`, respectively, for the remainder of this row (or row array in the case of array fetch).
 
 ## 6.2 SQLGetNestedHandle
 
@@ -1147,7 +1143,7 @@ Multiple calls to SQLGetNestedHandle for the same ParentStatementHandle and Col_
 
 Unless the [SQL_GD_CONCURRENT](#361-SQL_GD_CONCURRENT-bit-for-sql_getdata_extensions) bit within SQL_GETDATA_EXTENSIONS is specified, a subsequent call to retrieve data using SQLGetData, SQLFetch, SQLFetchScroll, or SQLNextColumn on the parent handle or a different nested statement handle implicitly closes the statement handle. If `SQL_GD_CONCURRENT` is specified, a subsequent call to retrieve data on the child statement handle does not affect any other statement handle.
 
-A subsequent call to SQLFreeHandle for a statement handle implicitly closes and frees all child statement handles.
+Closing a statement handle implicitly closes and frees all child statement handles.
 
 Calling SQLGetNestedHandle for a non-structured or collection valued column, or calling SQLGetData on a structured or collection-valued column, returns `SQL_ERROR` with SQLState `07009`, Invalid descriptor index.
 
